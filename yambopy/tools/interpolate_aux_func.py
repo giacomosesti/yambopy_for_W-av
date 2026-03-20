@@ -1,6 +1,106 @@
+#
+# License-Identifier: GPL
+#
+# Copyright (C) 2024 The Yambo Team
+#
+# Authors: GS
+#
+# This file is part of the yambopy project
+#
 import numpy as np
+from qepy import *
+from yambopy import *
 
 class QPCheckInterpolateW:
+    """
+    Class to handle the auxiliary functions of the W-av method from Yambo
+    
+    This reads the databases ``ndb.RIM_W_aux_func`` and the ``ndb.RIM`` file
+       
+    It compares the exact calculation with the interpolation/extrapolation applied within the W-av method
+ 
+    """
+
+    def __init__(self,save='.',aux='.',pot='.',filename='ndb.RIM_W_aux_func',rim='ndb.RIM',db1='ns.db1',do_not_read_cutoff=False):
+
+        self.save = save
+        self.aux = fcoeff
+        self.filename = filename
+        self.pot=pot
+        self.no_cutoff = do_not_read_cutoff
+        
+        #read lattice parameters
+        if os.path.isfile('%s/%s'%(self.save,db1)):
+            try:
+                database = Dataset("%s/%s"%(self.save,db1), 'r')
+                self.alat = database.variables['LATTICE_PARAMETER'][:]
+                self.lat  = database.variables['LATTICE_VECTORS'][:].T
+                gvectors = database.variables['G-VECTORS'][:].T
+                self.volume = np.linalg.det(self.lat)
+                self.rlat = rec_lat(self.lat)
+
+                self.red_gvectors = car_red(self.gvectors,self.rlat)
+                self.ngvectors    = len(self.gvectors)
+        
+                #read q-points
+                self.iku_qpoints = database.variables['K-POINTS'][:].T
+                self.car_qpoints = np.array([ q/self.alat for q in self.iku_qpoints ]) #atomic units
+                self.red_qpoints = car_red(self.car_qpoints,self.rlat) 
+                self.nqpoints = len(self.car_qpoints)
+
+            except:
+                raise IOError("Error opening %s."%db1)
+        else:
+            raise FileNotFoundError("File %s not found."%db1)      
+
+
+        #read RIM_W_aux_func database
+        if not os.path.isfile("%s/%s"%(self.aux,self.filename)): 
+            else: raise FileNotFoundError("File %s not found."%self.filename)
+
+        try:
+            database = Dataset("%s/%s"%(self.aux,self.filename), 'r')
+        except:
+            raise IOError("Error opening %s/%s in RIM_W auxiliary function database"%(self.save,self.filename))
+        
+        #read coefficients of the auxiliary functions       
+        f_temp = database.variables['RIM_W_aux_func_coeff'] # complex, shape (n_freq, n_q_ibz, n_g, n_g, 20, 2) 
+        self.f_coeff=f_temp[...,0]+1j*f_temp[...,1]
+
+        # keep only the g vectors for which the RIM_W is done
+        self.ngvectors = self.f_coeff.shape[3]
+        self.gvectors = np.array([ g/self.alat for g in gvectors[self.ngvectors] ])      
+
+        # read interpolation type
+        self.rimw_type = str(database.variables['RIM_W_type'][:]).strip().lower()
+        
+        #check anisotropy
+        self.em1_anis = database.variables['X_anis_coeff'][:]
+        anis_str = "".join(database.variables['Anisotropy'][:]).strip().lower()
+        self.is_anis_on = (anis_str == "true")
+
+        #check if cutoff present and supported
+        try:
+            database.variables['CUTOFF'][:]
+            self.cutoff = str(database.variables['CUTOFF'][:][0]).strip().lower()
+        except: IndexError
+
+        supported_cutoffs = ['none','slab x','slab y','slab z']
+        if self.cutoff not in supported_cutoffs: raise NotImplementedError("[ERROR] The W-av method is not currently implemented with this cutoff %s."%self.cutoff)
+
+        #read ndb.RIM only for the necessary g vecs
+        if os.path.isfile('%s/%s'%(self.pot,rim)):
+            try:
+                database = Dataset("%s/%s"%(self.pot,rim), 'r')
+                indices = np.arange(self.ngvectors)
+                self.coulomb = database.variables['RIM_qpg'][indices,indices,:]
+
+            except:
+                raise IOError("Error opening %s."%rim)
+        else:
+            raise FileNotFoundError("File %s not found."%rim)
+
+
     def __init__(self, q, Xw, rim_w_ng, k_grid):
         # Constants and Configuration
         self.np = 51
@@ -24,7 +124,8 @@ class QPCheckInterpolateW:
         max_pts = np.max(self.npoints)
         self.indexes = np.zeros((max_pts, 4, 3), dtype=int)
 
-import numpy as np
+.iku_kpoints
+
 
 def evaluate_interpolation_polynomial(q_samples, coeffs):
     """
@@ -144,14 +245,6 @@ def get_v_bare_general(q_vec, is_slab, idir_idx, alat):
         return (4.0 * np.pi) / (q_norm**2)
 
 
-# 1. Open your database
-ds = nc.Dataset('ndb.RIM_W_aux_func', 'r')
-f_coeff_data = ds.variables['RIM_W_aux_func_coeff'] # shape (n_freq, n_q_ibz, n_g, n_g, 20)
-rimw_type = str(ds.variables['RIM_W_type'][:]).strip().lower()
-em1_anis = ds.variables['X_anis_coeff'][:]
-
-anis_str = "".join(ds.variables['Anisotropy'][:]).strip().lower()
-is_anis_on = (anis_str == "true")
 
 
 
