@@ -259,7 +259,113 @@ def find_kpatch(kpts, kcentre, kdist, lat_vecs):
     kdiff = np.min(kdiff,axis=-1)
     return np.where(kdiff <= kdist)[0]
 
-    
+def kfmt(kpt,digits=6):
+    """
+    Format kpts
+    (useful for rlu coords.)
+    """
+    if kpt is None: return kpt
+
+    fmt_kcoords = []
+    for i in range(len(kpt)):
+        fmt_kcoords.append(round(kpt[i], digits))
+    return fmt_kcoords
+
+def generate_G_shells(rlat,Nshells=3,unshifted=False):
+    """
+    Generate G vectors in Cartesian coordinates
+
+    :: rlat -> reciprocal lattice vectors
+    :: Nshells -> number of shells generated (in some rare cases, a BZ could border a second-order shell)
+    :: unshifted -> if true., add [0.,0.,0.] to the Gvectors
+    """
+    car_G = []
+    for i in range(-Nshells,Nshells+1):
+        for j in range(-Nshells,Nshells+1):
+            for k in range(-Nshells,Nshells+1):
+                if (i, j, k) == (0,0,0): continue
+                car_G.append( i*rlat[0]+j*rlat[1]+k*rlat[2] )
+    car_G = np.array(car_G)
+
+    if unshifted: car_G = np.insert(car_G,0,np.zeros(3),axis=0)
+    return car_G
+
+def point_is_on_border(car_k,rlat,Nshells=3,tol=1e-6):
+    """
+    Evaluate the condition    k.G = 0.5 |G|^2
+    for each kpoint and a certain number of G shells.
+    If true, then the kpoint in on the BZ border.
+
+    :: car_k   : kpoints in cartesian coordinates
+    :: rlat    : reciprocal lattice vectors
+    :: Nshells : shells of G-vectors generated
+                 (default 3: should not be increased unless pathological BZ)
+    :: tol     : numeric tolerance (in principle depends on kpt density)
+    """
+    # First build Nshells shells of lattice vectors
+    car_G = generate_G_shells(rlat,Nshells=Nshells)
+    # Now evaluate Bragg's condition k.G = 0.5*|G|^2/2.
+    bragg_l = car_k @ car_G.T  # list of (Nk,NG) scalar products
+    bragg_r = 0.5 * np.linalg.norm(car_G,axis=1)**2. # (NG) norms
+    bragg_satisfied = np.abs(bragg_l - bragg_r[np.newaxis,:]) < tol # (Nk,NG) bool values: for each k, NG tests
+    # Find border points
+    border_points_indx = []
+    for ik in range(len(car_k)):
+        is_border = np.count_nonzero(bragg_satisfied[ik])
+        if is_border>0: border_points_indx.append(ik)
+    return border_points_indx
+
+def check_kgrid(red_kpts,rlat,tol=1e-5):
+    """
+    Analysis of Monkhorst-Pack grid
+
+    Inputs:
+    :: red_kpts -> kpts in rlu (IBZ only for faster check)
+    :: rlat     -> reciprocal lattice vectors
+
+    It returns:
+    :: Ngrid [Nx, Ny, Nz] -> MP grid size
+    :: min_dk_rlu         -> minimal k-steps in grid
+    """
+    def ind_min_pos(a,tol=1e-5):
+        return np.where(a>tol,a,np.inf).argmin()
+
+    # Faster to check on IBZ
+    kpts = red_kpts
+
+    # Get min nonzero values in each direction
+    kx = kpts[:,0]
+    ky = kpts[:,1]
+    kz = kpts[:,2]
+
+    ksteps = kfmt( [ kx[ind_min_pos(kx)],\
+                     ky[ind_min_pos(ky)],\
+                     kz[ind_min_pos(kz)] ] )
+
+    # From those we can find grid size
+    ksteps = [1. if stp == 0. else stp for stp in ksteps]
+    Ngrid  = [ int(np.round(1./stp)) for stp in ksteps]
+
+    # Check farthest points from origin along x,y,z
+    kpt_max_xyz =  [ kpts[np.argmax(np.abs(kx))],\
+                     kpts[np.argmax(np.abs(ky))],\
+                     kpts[np.argmax(np.abs(kz))] ]
+
+    # Are they on the border?
+    kdir_has_edge = point_is_on_border( red_car(kpt_max_xyz,rlat), rlat)
+
+    # The min k step is used to find the calculated points
+    # on the grid along symmetry directions for band plots.
+    # If some BZ-edge pts are missing along xyz, we must not
+    # consider that step size.
+    if not any(kdir_has_edge):
+        print("[WARNING] It looks like no points on the BZ border\
+                         might be sampled: check that this is what you want.")
+    min_dk_rlu = min([ksteps[ik] if ik in kdir_has_edge else np.inf \
+                     for ik in range(3)])
+
+    return Ngrid, min_dk_rlu
+
 def generate_kpoint_grid(nk1,nk2,nk3,sym_and_trev,IBZ=True,eps=1.0e-5):
     """
     Generation of gamma-centered Monkhorst-Pack grid.
