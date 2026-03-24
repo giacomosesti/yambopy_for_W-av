@@ -10,8 +10,9 @@
 import numpy as np
 import os
 from netCDF4 import Dataset
-from yambopy.kpoints import kfmt
-from yambopy.lattice import rec_lat, car_red
+from yambopy.kpoints import kfmt,check_kgrid,build_ktree,find_kpt
+from yambopy.lattice import rec_lat, car_red, red_car
+from yambopy.dbs.latticedb import YamboLatticeDB
 
 class QPCheckInterpolateW:
     """
@@ -23,12 +24,10 @@ class QPCheckInterpolateW:
  
     """
 
-    def __init__(self,save='.',aux='.',pot='.',filename='ndb.RIM_W_aux_func',rim='ndb.RIM',db1='ns.db1',do_not_read_cutoff=False):
+    def __init__(self,save='.',pot='.',filename='ndb.RIM_W_aux_func',db1='ns.db1',do_not_read_cutoff=False,Np=51):
 
         self.save = save
-        self.aux =  aux
         self.filename = filename
-        self.pot=pot
         self.no_cutoff = do_not_read_cutoff
         
         #read lattice parameters
@@ -40,19 +39,19 @@ class QPCheckInterpolateW:
                 gvectors = database.variables['G-VECTORS'][:].T
                 self.volume = np.linalg.det(self.lat)
                 self.rlat = rec_lat(self.lat)
+       
 
-        
                 #read q-points
                 self.iku_q = database.variables['K-POINTS'][:].T
                 self.car_q = np.array([ q/self.alat for q in self.iku_q ]) #atomic units
                 self.red_q = car_red(self.car_q,self.rlat) 
                 self.nqpoints = len(self.car_q)
 
+
             except:
                 raise IOError("Error opening %s."%db1)
         else:
             raise FileNotFoundError("File %s not found."%db1)      
-
 
         #read RIM_W_aux_func database
         if not os.path.isfile("%s/%s"%(self.aux,self.filename)): 
@@ -62,57 +61,79 @@ class QPCheckInterpolateW:
             database = Dataset("%s/%s"%(self.aux,self.filename), 'r')
           except:
             raise IOError("Error opening %s/%s in RIM_W auxiliary function database"%(self.save,self.filename))
-        
+
+        ylat = YamboLatticeDB.from_db_file(filename='SAVE/ns.db1',Expand=True)
+        ktree = build_ktree(ylat.red_kpoints)
+        self.ktree = ktree
+        self.kmap         = ylat.BZ_to_IBZ_indexes
+        self.inv_kmap     = ylat.IBZ_to_BZ_indexes
+        self.full         = ylat.iku_kpoints
+
         #read coefficients of the auxiliary functions       
         f_temp = database.variables['RIM_W_aux_func_coeff'] # complex, shape (n_freq, n_q_ibz, n_g, n_g, 20, 2) 
         self.f_coeff=f_temp[...,0]+1j*f_temp[...,1]
 
         # keep only the g vectors for which the RIM_W is done
         self.ngvectors = self.f_coeff.shape[3]
-        self.gvectors = np.array([ g/self.alat for g in gvectors[self.ngvectors] ])      
+        self.gvectors = np.array([ g/self.alat for g in gvectors[:self.ngvectors] ])      
         self.red_gvectors = car_red(self.gvectors,self.rlat)
 
         # read interpolation type
-        self.rimw_type = str(database.variables['RIM_W_type'][:]).strip().lower()
+        self.rimw_type = b"".join(database.variables['RIM_W_type'][:]).decode('utf-8').strip().lower()
         
         #check anisotropy
         self.em1_anis = database.variables['X_anis_coeff'][:]
-        anis_str = str(database.variables['Anisotropy'][:]).strip().lower()
+        anis_str = b"".join(database.variables['Anisotropy'][:]).decode('utf-8').strip().lower()
         self.is_anis_on = (anis_str == "true")
 
         #check if cutoff present and supported
-        try:
-            database.variables['CUTOFF'][:]
-            self.cutoff = str(database.variables['CUTOFF'][:][0]).strip().lower()
-        except: IndexError
+        self.cutoff = b"".join(database.variables['CUTOFF'][:]).decode('utf-8').strip().lower()
+        self.Np=Np
 
-        dirs=[1,2,3]
-        #supported_cutoffs = ['none','slab x','slab y','slab z']
-        #if self.cutoff not in supported_cutoffs: raise NotImplementedError("[ERROR] The W-av method is not currently implemented with this cutoff %s."%self.cutoff)
-        #if self.cutoff in supported_cutoffs[1:]:
-        #      idx=supported_cutoffs[1:].index(self.cutoff) 
-        #      self.lcut=self.alat[idx]/2
-        #      self.n_dirs = 2
-        #      self.i_dirs=[ i_dirs[j] for j in dirs if j!= idx ]
-        #else:
-        self.n_dirs = 3
-        self.i_dirs=dirs
-
-        #read ndb.RIM only for the necessary g vecs
-        if os.path.isfile('%s/%s'%(self.pot,rim)):
-            try:
-                database = Dataset("%s/%s"%(self.pot,rim), 'r')
-                indices = np.arange(self.ngvectors)
-                self.coulomb = database.variables['RIM_qpg'][indices,indices,:]
-
-            except:
-                raise IOError("Error opening %s."%rim)
+        dirs=[0,1,2]
+        print(anis_str)
+        supported_cutoffs = ['none','slab x','slab y','slab z']
+        if self.cutoff not in supported_cutoffs: raise NotImplementedError("[ERROR] The W-av method is not currently implemented with this cutoff %s."%self.cutoff)
+        if self.cutoff in supported_cutoffs[1:]:
+              idx=supported_cutoffs[1:].index(self.cutoff) 
+              self.lcut=self.alat[idx]/2
+              self.n_dirs = 2
+              self.i_dirs=[ dirs[j] for j in dirs if j!= idx ]
         else:
-            raise FileNotFoundError("File %s not found."%rim)
+             self.n_dirs = 3
+             self.i_dirs=dirs
 
         deltaq_rlu,deltaq_iku= self.get_deltak()
         print(deltaq_iku)
-    
+        print(deltaq_rlu)
+ 
+        Ngrid, min_dk_rlu=check_kgrid(self.red_q,self.rlat)
+
+        ###################################
+        # Get the indexes of the q points #
+        ###################################
+        
+        for idir in dirs:
+         for igr in range(8,9):
+          for igc in range(0,1):
+
+           n_indx_steps=Ngrid[idir] // 2
+         
+           for i in range(0,Ngrid[idir]):         
+         
+            q_num = np.zeros(3)
+            q_num[idir] = deltaq_rlu[idir]*(i-n_indx_steps)
+            bz_index = find_kpt(self.ktree,q_num)
+            ibz_index = self.kmap[bz_index]
+            print(' k point idx ',ibz_index)
+            print(' check q g1 g2')
+ 
+            indexes=self.get_equiv_index(q_num,self.red_gvectors[igr],self.red_gvectors[igc],ylat)
+            print(indexes)
+
+            for i_dense in range(Np)
+ 
+
     def get_deltak(self):
         kx = self.red_q[:,0]
         ky = self.red_q[:,1]
@@ -123,18 +144,52 @@ class QPCheckInterpolateW:
 
         idxs = [ind_min_pos(kx), ind_min_pos(ky), ind_min_pos(kz)]
         
-        delta_rlu = np.zeros((3, 3))
+        delta_rlu = np.zeros(3)
         delta_iku = np.zeros((3, 3))
              
         for i, idx in enumerate(idxs):
-            delta_rlu[i, :] = self.red_q[idx, :]
+            delta_rlu[i] = self.red_q[idx,i]
             delta_iku[i, :] = self.iku_q[idx, :]
-            if abs(delta_rlu[i,i])<1e-6: 
-               delta_rlu[i,i]=1
-               delta_iku[i,i]= delta_rlu[i,i]
+            if abs(delta_rlu[i])<1e-6: 
+               delta_rlu[i]=1
+               delta_iku[i,i]= delta_rlu[i]
 
         return delta_rlu, delta_iku
-        
+
+    def get_equiv_index(self,q_target,G1_target,G2_target,ylat):
+       
+     # Assuming G1_target and G2_target are the RLU G-vectors you are checking
+     qpGr = q_target + G1_target
+     qpGc = q_target + G2_target
+     find = 0
+     # Nested loops to find the triple (iq_ibz, is, ig) that reconstructs the targets
+     for ig_trial in range(self.ngvectors):
+         g_vec = self.red_gvectors[ig_trial]
+         indexes=np.zeros(3)
+          
+         for iq_bz in range(len(self.full)):
+          iq_ibz = self.kmap[iq_bz]
+          S = ylat.sym_red[np.where(self.inv_kmap[iq_ibz]==iq_bz)]
+          # Apply symmetry: S * (q_ibz + G_trial)
+          qpG_trial = np.matmul(S,self.red_q[iq_ibz] + g_vec)
+  
+          # Match G1
+          if np.allclose(qpGr, qpG_trial, atol=1e-5):
+             indexes[0] = iq_ibz
+             indexes[1] = ig_trial # ig1
+             find += 1
+              
+          # Match G2
+          if np.allclose(qpGc, qpG_trial, atol=1e-5):
+             indexes[2] = ig_trial # ig2
+             find += 1
+              
+          if find == 2: break
+         if find == 2: break
+     if (find != 2): raise SystemExit("not found the matching q+G and q+G'")      
+     return indexes   
+
+ 
 #    def generate_q_path(self):
 #
 #
