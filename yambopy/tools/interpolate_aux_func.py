@@ -114,7 +114,7 @@ class QPCheckInterpolateW:
         #check if cutoff present and supported
         self.cutoff = b"".join(database.variables['CUTOFF'][:]).decode('utf-8').strip().lower()
         self.Np=Np
-        dq = 1./(self.Np-1)
+        distq = 1./(self.Np-1)
         
         dirs=[0,1,2]
         print(anis_str)
@@ -150,6 +150,9 @@ class QPCheckInterpolateW:
    
               n_indx_steps=Ngrid[idir] // 2
              
+              # define all the quantities used in the loop
+              # Np is the sampling in each miniBZ
+              qnorm=np.zeros(Ngrid[idir]*Np)
               vcoul=np.zeros(Ngrid[idir]*Np) 
               func=np.zeros(Ngrid[idir]*Np,dtype=np.complex64)
               epsm1=np.zeros(Ngrid[idir]*Np,dtype=np.complex64)
@@ -165,61 +168,58 @@ class QPCheckInterpolateW:
                print(' check q g1 g2')
     
                indexes=self.get_equiv_index(q_num,self.red_gvectors[igr],self.red_gvectors[igc],ylat)
-   
-               for i_dense in range(Np):
-                #
-                # we define the q_sampl for which we calculate the interpolated quantities
-                # the q_sampl are always centered in 0, only the interpolated quantities depend on the bz_index of input
-                q_sampl = np.zeros(3)
-                q_sampl[idir] = (dq*(i_dense-1)-0.5)*deltaq_rlu[idir]
-                #
-                # keep q_sampl in rlu
-                #
-                q_rlu=q_sampl
-                #
-                # Convert q_sampl,gc and gr to iku
-                #
-                q=red_car([q_rlu],self.rlat)[0]*self.alat
-                #
-                # Save total q,G, G' and total norm of q in cc 
-                #
-                q_out = red_car([q_num+q_rlu],self.rlat)[0]*2*np.pi
-                q_norm= np.linalg.norm(q_out)          
-                gr=self.gvectors[igr]*2*np.pi
-                gc=self.gvectors[igc]*2*np.pi
-                #
-                # =================
-                #   Evaluate v_col
-                # =================             
-                #
-                vr=v_bare(q_norm,gr,self.n_dirs, self.lcut, self.cut_dir)
-                vc=v_bare(q_norm,gc,self.n_dirs, self.lcut, self.cut_dir)
-                v_coul[mem_idx]=np.sqrt(vr*vc)
-                #
-                # Transform f_coeff from iBZ to BZ
-                #
-                symi=np.linalg.inv(ylat.sym_red[ylat.symmetry_indexes[bz_index]])
-                #
-                f_trans=trans_f_coeff(self.f_coeff[0,np.int64(indexes[0]),np.int64(indexes[1]),np.int64(indexes[2]),:],symi)
-                #
-                # evaluate the interpolating polynomial
-                #
-                mem_idx=i*Np+i_dense
-                f_val[mem_idx]=evaluate_polynomial(q,f_trans)
-                #
-
-
-                if((igr==0 or igc==0) and ibz_index==0):
+               inter=list(range(Np*i,Np*i+i_dense))
+               #
+               # Transform f_coeff from iBZ to BZ
+               #
+               symi=np.linalg.inv(ylat.sym_red[ylat.symmetry_indexes[bz_index]])
+               f_trans=trans_f_coeff(self.f_coeff[0,np.int64(indexes[0]),np.int64(indexes[1]),np.int64(indexes[2]),:],symi)
+               #
+               # we define the q_sampl for which we calculate the interpolated quantities
+               # the q_sampl are always centered in 0, only the interpolated quantities depend on the bz_index of input
+               q_sampl = np.zeros((3,Np))
+               q_sampl[idir,:] = (distq*(i_dense-1)-0.5)*deltaq_rlu[idir]
+               #
+               # keep q_sampl in rlu
+               #
+               q_rlu=q_sampl
+               #
+               # Convert q_sampl,gc and gr to iku
+               #
+               dq=red_car(q_rlu,self.rlat)[0]*self.alat
+               #
+               # Save total q,G, G' and total norm of q in cc 
+               #
+               q_out = red_car([q_num[:, None]+q_rlu],self.rlat)[0]*2*np.pi
+               q_norm[inter]= np.linalg.norm(q_out,axis=0)          
+               gr=self.gvectors[igr]*2*np.pi
+               gc=self.gvectors[igc]*2*np.pi
+               #
+               # =================
+               #   Evaluate v_col
+               # =================             
+               #
+               vr=v_bare(q_norm[inter],gr,self.n_dirs, self.lcut, self.cut_dir)
+               vc=v_bare(q_norm[inter],gc,self.n_dirs, self.lcut, self.cut_dir)
+               v_coul[inter]=np.sqrt(vr*vc)
+               #
+               # evaluate the interpolating polynomial
+               #
+               #
+               if((igr==0 or igc==0) and ibz_index==0):
+                 for i_dense in range(Np):
+                       
+                  mem_idx=Np*i+i_dense
                 
-                  W[mem_idx],epsm1[mem_idx],f_val[mem_idx]=analytic(ibz_index,self.f_coeff,v_coul[mem_idx],iw,igr,igc,(self.n_dirs is 2),self.rimw_type,self.is_anis_on) 
-
-                #
-                else:
-                  epsm1[mem_idx] = f_val[mem_idx]*v_coul[mem_idx]/(1.0-v_coul[mem_idx]*f_val[mem_idx])
-                  W= v_coul[mem_idx]*f_val[mem_idx]*v_coul[mem_idx]/(1.0-v_coul[mem_idx]*f_val[mem_idx])
+                  W[mem_idx],epsm1[mem_idx],f_val[mem_idx]=analytic(ibz_index,self.f_coeff,dq[i_dense],v_coul[mem_idx],iw,igr,igc,(self.n_dirs is 2),self.rimw_type,self.is_anis_on) 
+              
+               else:
+                  f_val[inter]=evaluate_polynomial(dq[inter], f_trans)
+                  epsm1[inter] = f_val[inter]*v_coul[inter]/(1.0-v_coul[inter]*f_val[inter])
+                  W[inter]= v_coul[inter]*f_val[inter]*v_coul[inter]/(1.0-v_coul[inter]*f_val[inter])
                   if (igc==igr and iw==0 and self.rimw_type == "metal"):
-                    epsm1[mem_idx] = 1.0/(1.0-v_coul[mem_idx]*f_val[mem_idx])
-                    W[mem_idx]= v_coul[mem_idx]/(1.0-v_coul[mem_idx]*f_val[mem_idx])
+                    epsm1[inter] = 1.0/(1.0-v_coul[inter]*f_val[inter])
+                    W[inter]= v_coul[inter]/(1.0-v_coul[inter]*f_val[inter])
               #
               # Store the data, in a .npz database or in a file
               #
@@ -291,7 +291,7 @@ class QPCheckInterpolateW:
      return indexes   
  
 
-def evaluate_polynomial(q_samples, coeffs):
+def evaluate_polynomial(dq, coeffs):
 #   """
 #   Evaluates the 20-term polynomial for a batch of q-points.
 #   
@@ -299,27 +299,19 @@ def evaluate_polynomial(q_samples, coeffs):
 #   q_samples: np.array of shape (N, 3) - The q-points to evaluate
 #   coeffs:    np.array of shape (20,) - The f_coeff_loc coefficients
 #   """
-#   Decompose q into components for readability
-   q1, q2, q3 = q_samples[0], q_samples[1], q_samples[2]
-   
-#   constant and linear terms: 
-   func = (coeffs[0] + 
-           q1 * coeffs[1] + 
-           q2 * coeffs[2] + 
-           q3 * coeffs[3])
-#   
-#   quadratic terms:
-   func += (q1**2 * coeffs[4] + 2*q1*q2 * coeffs[5] +
-            q2**2 * coeffs[7] + 2*q2*q3 * coeffs[8] +
-            q3**2 * coeffs[9] + 2*q3*q1 * coeffs[6])
-#   
-#   Cubic terms
-   func += (q1**3 * coeffs[10] + 3*q1**2*q2 * coeffs[11] + 3*q1**2*q3 * coeffs[12] +
-            q2**3 * coeffs[14] + 3*q2**2*q3 * coeffs[15] + 3*q2**2*q1 * coeffs[13] +
-            q3**3 * coeffs[18] + 3*q3**2*q1 * coeffs[17] + 3*q3**2*q2 * coeffs[16] +
-            6*q1*q2*q3 * coeffs[19])
-            
-   return func
+"""
+    dq: (Np, 3) array of displacements
+    coeffs: (20,) array of transformed coefficients
+    """
+    x, y, z = dq_batch[:,0], dq_batch[:,1], dq_batch[:,2]
+    # Construct a matrix of shapes (Np, 20)
+    terms = np.array([
+        np.ones_like(x), x, y, z,             # constant/linear
+        x**2, x*y, x*z, y**2, y*z, z**2,      # quadratic
+        x**3, x**2*y, x**2*z, y**2*x, y**3,   # cubic
+        y**2*z, z**2*x, z**2*y, z**3, x*y*z   # 
+    ])
+    return np.dot(coeffs, terms)
 
 def trans_f_coeff(f_func, symi):
 #   """
@@ -401,8 +393,8 @@ def v_bare(q_vec, g_vec, n_dirs, lcut, cutdir):
     lcut:  cutoff distance (alat[idx]/2)
     """
     # Total momentum Q = q + G
-    Q = q_vec + g_vec
-    q_norm_sq = np.dot(Q, Q)
+    Q = q_vec + g_vec[:,None]
+    q_norm_sq = np.sum(Q**2, axis=0)
     
     # Avoid division by zero at the Gamma point
     if q_norm_sq < 1e-12: 
@@ -410,10 +402,10 @@ def v_bare(q_vec, g_vec, n_dirs, lcut, cutdir):
 
     if n_dirs == 2:
         # --- 2D Slab (here named for Z-cutoff, logic all-wise) ---
-        q_z = Q[cutdir]
+        q_z = Q[cutdir,:]
         # q_xy norm of the in-plane components, q_z out-of plane
         q_in_sq = q_norm_sq - q_z**2
-        q_xy = np.sqrt(max(q_in_sq, 0.0))        
+        q_xy = np.sqrt(np.maximum(q_in_sq, 0.0))        
 
         # v(q) = (4*pi/q^2) * (1 - exp(-q_xy * L) * cos(q_z * L))
         term_cutoff = 1.0 - np.exp(-q_xy * lcut) * np.cos(np.abs(q_z) * lcut)
@@ -499,7 +491,7 @@ def v_bare(q_vec, g_vec, n_dirs, lcut, cutdir):
 ## pi, alat, q_sampl, q_out_norm, q_rlu, f_coeff, iomega, 
 ## cut_is_slab, rimw_type, idir, is_anis_on, em1_anis, vslab, r1
 #
-def analytic(iq,f_coeff,iw,igr,igc,cut_is_slab,rimw_typ,is_anis_on):
+def analytic(iq,f_coeff,q_sampl,v_coul,iw,igr,igc,cut_is_slab,rimw_typ,is_anis_on):
    # ---------------------------------------------------------
    # HEAD (G1 = 0, G2 = 0)
    # ---------------------------------------------------------
