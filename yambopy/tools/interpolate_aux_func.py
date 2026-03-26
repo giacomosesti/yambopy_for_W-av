@@ -26,7 +26,6 @@ class QPCheckInterpolateW:
 
     def __init__(self,save='.',aux='.',filename='ndb.RIM_W_aux_func',db1='ns.db1',do_not_read_cutoff=False,freq=None,gr=None,gc=None,file_out=False,Np=51):
 
-
         self.save = save
         self.aux = aux
         self.filename = filename
@@ -129,9 +128,6 @@ class QPCheckInterpolateW:
         else:
              self.n_dirs = 3
              self.i_dirs=dirs
-        print(self.n_dirs is 2)
-        exit()
-
 
         deltaq_rlu,deltaq_iku= self.get_deltak()
         print(deltaq_iku)
@@ -177,6 +173,7 @@ class QPCheckInterpolateW:
                #
                # we define the q_sampl for which we calculate the interpolated quantities
                # the q_sampl are always centered in 0, only the interpolated quantities depend on the bz_index of input
+               #
                q_sampl = np.zeros((3,Np))
                q_sampl[idir,:] = (distq*(i_dense-1)-0.5)*deltaq_rlu[idir]
                #
@@ -211,7 +208,8 @@ class QPCheckInterpolateW:
                        
                   mem_idx=Np*i+i_dense
                 
-                  W[mem_idx],epsm1[mem_idx],f_val[mem_idx]=analytic(ibz_index,self.f_coeff,dq[i_dense],v_coul[mem_idx],iw,igr,igc,(self.n_dirs is 2),self.rimw_type,self.is_anis_on) 
+                  W[mem_idx],epsm1[mem_idx],f_val[mem_idx]=analytic(ibz_index,self.f_coeff,dq[i_dense],self.red_gvectors,v_coul[mem_idx],iw,igr,igc,
+                            self.cut_dir,(self.n_dirs is 2),self.rimw_type,self.is_anis_on) 
               
                else:
                   f_val[inter]=evaluate_polynomial(dq[inter], f_trans)
@@ -225,14 +223,19 @@ class QPCheckInterpolateW:
               #
               filename=f'W_w{iw}_rludir_{idir}_fit_g{igr}_g{igc}'
               if dat_out=True:
-                 filename=f"{filename}.dat"
+                 fmt=15.8e
+                 with open(f"{filename}.dat", "w") as f:
+                   f.write("q(bohr^-1)  V_coul(Ha)  Re(f)(Ha^-1)  Im(f)(Ha^-1)  Re(epsm1)  
+                            Im(epsm1)  Re(W)(Ha)  Im(W)(Ha)\n")
+                   for j in range(Ngrid[idir]*Np):
+                    f.write(f"{q_norm[j]:fmt} {v_coul[j]:fmt} {np.real(f_val[j]):fmt} {np.imag(f_val[j]):fmt}
+                      {np.real(epsm1[j]):fmt}  {np.imag(epsm1[j]:fmt)} {np.real(W[j]):fmt} {np.imag(W[j]):fmt}\n")
               else:
                  filename = f"{filename}.npz"
               
-                 np.savez(f"{filename}",a=kpts,b=q_norm,c=v_coul,d=np.real(f_val),e=np.imag(f_val),f=np.real(epsm1),g=np.imag(epsm1), 
-                 h=np.real(W),i=np.imag(W))
+                 np.savez(f"{filename}",a=q_norm,b=v_coul,c=np.real(f_val),d=np.imag(f_val),
+                    e=np.real(epsm1),f=np.imag(epsm1),g=np.real(W),h=np.imag(W))
                  print(" [IO] {filename} file dumped")
-
 
 
     def get_deltak(self):
@@ -416,82 +419,8 @@ def v_bare(q_vec, g_vec, n_dirs, lcut, cutdir):
         
     return v_val
 #
-#def get_single_w_check(iw, igr, igc, idir_idx, 
-#                      f_coeff_all, vx_all, bare_qpg, 
-#                      q_map, delta_q, n_indx_steps, npts_dir,
-#                      rimw_type, is_slab, rim_id_ref, em1_anis):
-#   """
-#   Evaluates Numerical W for specific frequency (iw) and G-pair (igr, igc).
-#   
-#   Parameters:
-#   iw, igr, igc: Indices provided by the user.
-#   f_coeff_all: From NetCDF (n_freq, n_q, n_g, n_g, 20)
-#   vx_all:      From NetCDF (n_freq, n_q, n_g, n_g)
-#   q_map:       A dictionary/function mapping q-vectors (tuple) to index 'iq'.
-#   idir_idx:    0, 1, or 2 (Direction X, Y, or Z).
-#   """
-#   
-#   results = []
-#   npts = npts_dir[idir_idx]
-#   
-#   # Pre-fetch system type and reference flags
-#   # rim_id_ref is assumed to be boolean (True/False)
-#   
-#   for i in range(npts):
-#       # 1. Calculate q-vector for this step
-#       q_num = delta_q[idir_idx] * (i - n_indx_steps[idir_idx])
-#       q_norm = np.linalg.norm(q_num)
-#       
-#       # 2. Get the index 'iq' using your map
-#       # Assuming q_map is a dict with rounded q-tuples as keys
-#       q_key = tuple(np.round(q_num, 6))
-#       iq = q_map.get(q_key, None)
-#       
-#       if iq is None:
-#           continue # Skip if q is outside the database
 #
-#       # 3. Numerical Evaluation (Step 3 in Fortran)
-#       # Fetch bare potentials and vX
-#       v_bare_igr = bare_qpg[iq, igr]
-#       v_bare_igc = bare_qpg[iq, igc]
-#       
-#       vslab_num = (4.0 * np.pi) / (v_bare_igr * v_bare_igc) # Simplification
-#
-#       # Pull numerical vX (from NetCDF)
-#       vx_val = vx_all[iw, iq, igr, igc]
-#       
-#       # Numerical f: func_num = (v_bare_g1 * v_bare_g2 / 4pi) * (vX / (1 + vX))
-#       f_num = (v_bare_igr * v_bare_igc / (4.0 * np.pi)) * (vx_val / (1.0 + vx_val))
-#
-#       epsm1_num = vx_val
-#       
-#       # Handle the specialized rimw_type logic
-#       if rimw_type.lower() == 'metal':
-#           epsm1_num = vx_val + 1    
-#       
-#       # W calculation
-#       w_num = epsm1_num * vslab_num
-#
-#       # Store for the user
-#       results.append({
-#           'q_norm': q_norm,
-#           'f_real': f_num.real,
-#           'f_imag': f_num.imag,
-#           'epsm1_real': epsm1_num.real,
-#           'epsm1_imag': epsm1_num.imag,
-#           'w_real': w_num.real,
-#           'w_imag': w_num.imag
-#       })
-#
-#   return results
-#
-#
-#
-## Constants and temporary variables assumed available:
-## pi, alat, q_sampl, q_out_norm, q_rlu, f_coeff, iomega, 
-## cut_is_slab, rimw_type, idir, is_anis_on, em1_anis, vslab, r1
-#
-def analytic(iq,f_coeff,q_sampl,v_coul,iw,igr,igc,cut_is_slab,rimw_typ,is_anis_on):
+def analytic(iq,f_coeff,q_sampl,gvec,v_coul,iw,igr,igc,cutdir=2,cut_is_slab,rimw_type,is_anis_on):
    # ---------------------------------------------------------
    # HEAD (G1 = 0, G2 = 0)
    # ---------------------------------------------------------
@@ -517,12 +446,12 @@ def analytic(iq,f_coeff,q_sampl,v_coul,iw,igr,igc,cut_is_slab,rimw_typ,is_anis_o
                # Limit Check
                if iku_v_norm(q_sampl) < q0_def_norm:
                    if cut_is_slab:
-                       epsm1_sampl = q_out_norm/(q_out_norm-2.0*pi*func*alat[idir[0]])
-                       W_sampl = 2.0*pi*a_mat[idir[0],idir[0]]/(q_out_norm-2.0*pi*func*alat[idir[0]])
+                       epsm1_sampl = q_out_norm/(q_out_norm-2.0*pi*func*alat[cutdir])
+                       W_sampl = 2.0*pi*a_mat[cutdir,cutdir]/(q_out_norm-2.0*pi*func*alat[cutdir])
                    else:
                        epsm1_sampl = q_out_norm**2/(q_out_norm**2 - 4.0*pi*func)
                        W_sampl = 4.0*pi/(q_out_norm**2 - 4.0*pi*func)
-#               # Output/Cycle logic here...
+                   return W_sampl,epsm1_sampl,func
 #
            else: # Metal Finite Frequency
                func = f_coeff[iw,0,0,0,0]
@@ -531,8 +460,9 @@ def analytic(iq,f_coeff,q_sampl,v_coul,iw,igr,igc,cut_is_slab,rimw_typ,is_anis_o
                    epsm1_sampl = vslab * func / (1.0 - vslab * func)
                    W_sampl = (func / (1.0 - vslab * func)) * (vslab**2 / q0_def_norm**2)
                    func = f_coeff[iw,0,0,0,0] * iku_v_norm(q_sampl)**2
-#                   # Output/Cycle logic here...
-#               
+                   return W_sampl,epsm1_sampl,func
+               
+
 #               # Finite frequency exponential form
                sign_val = np.sign(f_coeff[iw,0,0,0,2].real)
                sqrt_val = np.sqrt(f_coeff[iw,0,0,0,1]**2 * q_rlu[0]**2 + 
@@ -546,10 +476,12 @@ def analytic(iq,f_coeff,q_sampl,v_coul,iw,igr,igc,cut_is_slab,rimw_typ,is_anis_o
                func = func*iku_v_norm(q_sampl)**2
                epsm1_sampl = (func*vslab/r1) / (1.0 - (vslab/r1)*func)
                W_sampl = (vslab/r1) * (func*vslab/r1) / (1.0 - (vslab/r1)*func)
+               return W_sampl,epsm1_sampl,func
 
        # ---------------------------------------------------------
        # Semiconductors and Dirac Cone
        # ---------------------------------------------------------
+
        if iku_v_norm(q_sampl) < 1e-5:
            epsm1_sampl = vslab*f_coeff[iw,0,0,0,0]/(1.0-vslab*f_coeff[iw,0,0,0,0])
            W_sampl = (f_coeff[iw,0,0,0,0]/(1.0-vslab*f_coeff[iw,0,0,0,0]))*(vslab**2/q0_def_norm**2)
@@ -562,7 +494,7 @@ def analytic(iq,f_coeff,q_sampl,v_coul,iw,igr,igc,cut_is_slab,rimw_typ,is_anis_o
 
            if is_anis_on and iw == 0:
                W_sampl *= em1_anis[idir_idx]
-           # Output/Cycle...
+           return W_sampl,epsm1_sampl,func
 
        # Analytical Exponential Form for Semiconductors
        if cut_is_slab:
@@ -588,45 +520,46 @@ def analytic(iq,f_coeff,q_sampl,v_coul,iw,igr,igc,cut_is_slab,rimw_typ,is_anis_o
        else:
            # Default polynomial head (simplified for brevity, follow your f_coeff_loc mapping)
            pass
+           return W_sampl,epsm1_sampl,func
 
    # ---------------------------------------------------------
    # WINGS (G1 = 0, G2 != 0)
    # ---------------------------------------------------------
-   if ig1 == 0 and ig2 != 0:
+   if igr == 0 and igc != 0:
        if rimw_type == "metal":
           if cut_is_slab:
             if iw == 0:
-                   func = f_coeff[iw,iq,0,ig2,1].real * abs(q_rlu[0]) + \
-                          f_coeff[iw,iq,0,ig2,2].real * abs(q_rlu[1]) + \
-                          f_coeff[iw,iq,0,ig2,3].real * abs(q_rlu[2]) + \
-                          f_coeff[iw,iq,0,ig2,1].imag * q_rlu[0] + \
-                          f_coeff[iw,iq,0,ig2,2].imag * q_rlu[1] + \
-                          f_coeff[iw,iq,0,ig2,3].imag * q_rlu[2] + \
-                          f_coeff[iw,iq,0,ig2,4] * (q_rlu[0]**2) + \
-                          f_coeff[iw,iq,0,ig2,5] * (q_rlu[1]**2) + \
-                          f_coeff[iw,iq,0,ig2,6] * (q_rlu[2]**2) + \
-                          f_coeff[iw,iq,0,ig2,7] * np.sign(q_rlu[0]**2,q_rlu[0]) + \
-                          f_coeff[iw,iq,0,ig2,8] * np.sign(q_rlu[1]**2,q_rlu[1]) + \
-                          f_coeff[iw,iq,0,ig2,9] * np.sign(q_rlu[2]**2,q_rlu[2])
+                   func = f_coeff[iw,iq,0,igc,1].real * abs(q_rlu[0]) + \
+                          f_coeff[iw,iq,0,igc,2].real * abs(q_rlu[1]) + \
+                          f_coeff[iw,iq,0,igc,3].real * abs(q_rlu[2]) + \
+                          f_coeff[iw,iq,0,igc,1].imag * q_rlu[0] + \
+                          f_coeff[iw,iq,0,igc,2].imag * q_rlu[1] + \
+                          f_coeff[iw,iq,0,igc,3].imag * q_rlu[2] + \
+                          f_coeff[iw,iq,0,igc,4] * (q_rlu[0]**2) + \
+                          f_coeff[iw,iq,0,igc,5] * (q_rlu[1]**2) + \
+                          f_coeff[iw,iq,0,igc,6] * (q_rlu[2]**2) + \
+                          f_coeff[iw,iq,0,igc,7] * np.sign(q_rlu[0]**2,q_rlu[0]) + \
+                          f_coeff[iw,iq,0,igc,8] * np.sign(q_rlu[1]**2,q_rlu[1]) + \
+                          f_coeff[iw,iq,0,igc,9] * np.sign(q_rlu[2]**2,q_rlu[2])
             else:
                # Finite Frequency Wings
                # Check for specific G-vector directions (idir 2 and 3)
                is_g_zero = (g_vec[ig2, idir[1]] == g_vec[ig2, idir[2]]) and (g_vec[ig2, idir[1]] == 0)
                
                # Cubic expansion with parity (sign) checks
-               term1 = (f_coeff[iw,iq,0,ig2,1] + f_coeff[iw,iq,0,ig2,4] + 
-                       (f_coeff[iw,iq,0,ig2,1] - f_coeff[iw,iq,0,ig2,4])*np.sign(1.0,q_rlu[0]))
-               term2 = (f_coeff[iw,iq,0,ig2,2] + f_coeff[iw,iq,0,ig2,5] + 
-                       (f_coeff[iw,iq,0,ig2,2] - f_coeff[iw,iq,0,ig2,5])*np.sign(1.0,q_rlu[1]))
-               term3 = (f_coeff[iw,iq,0,ig2,3] + f_coeff[iw,iq,0,ig2,6] +
-                       (f_coeff[iw,iq,0,ig2,3] - f_coeff[iw,iq,0,ig2,6])*np.sign(1.0,q_rlu[2]))
+               term1 = (f_coeff[iw,iq,0,igc,1] + f_coeff[iw,iq,0,igc,4] + 
+                       (f_coeff[iw,iq,0,igc,1] - f_coeff[iw,iq,0,igc,4])*np.sign(1.0,q_rlu[0]))
+               term2 = (f_coeff[iw,iq,0,igc,2] + f_coeff[iw,iq,0,igc,5] + 
+                       (f_coeff[iw,iq,0,igc,2] - f_coeff[iw,iq,0,igc,5])*np.sign(1.0,q_rlu[1]))
+               term3 = (f_coeff[iw,iq,0,igc,3] + f_coeff[iw,iq,0,igc,6] +
+                       (f_coeff[iw,iq,0,igc,3] - f_coeff[iw,iq,0,igc,6])*np.sign(1.0,q_rlu[2]))
                # Cubic terms c8-c13
-               term4 = (f_coeff[iw,iq,0,ig2,7] + f_coeff[iw,iq,0,ig2,10] + 
-                       (f_coeff[iw,iq,0,ig2,7] - f_coeff[iw,iq,0,ig2,10])*np.sign(1.0, q_rlu[0]))
-               term5 = (f_coeff[iw,iq,0,ig2,8] + f_coeff[iw,iq,0,ig2,11] + 
-                       (f_coeff[iw,iq,0,ig2,8] - f_coeff[iw,iq,0,ig2,11])*np.sign(1.0, q_rlu[1]))
-               term6 = (f_coeff[iw,iq,0,ig2,9] + f_coeff[iw,iq,0,ig2,12] + 
-                       (f_coeff[iw,iq,0,ig2,9] - f_coeff[iw,iq,0,ig2,12])*np.sign(1.0, q_rlu[2]))
+               term4 = (f_coeff[iw,iq,0,igc,7] + f_coeff[iw,iq,0,igc,10] + 
+                       (f_coeff[iw,iq,0,igc,7] - f_coeff[iw,iq,0,igc,10])*np.sign(1.0, q_rlu[0]))
+               term5 = (f_coeff[iw,iq,0,igc,8] + f_coeff[iw,iq,0,igc,11] + 
+                       (f_coeff[iw,iq,0,igc,8] - f_coeff[iw,iq,0,igc,11])*np.sign(1.0, q_rlu[1]))
+               term6 = (f_coeff[iw,iq,0,igc,9] + f_coeff[iw,iq,0,igc,12] + 
+                       (f_coeff[iw,iq,0,igc,9] - f_coeff[iw,iq,0,igc,12])*np.sign(1.0, q_rlu[2]))
                if is_g_zero:
                    func = (term1*q_rlu[0]**2 + term2*q_rlu[1]**2 + term3*q_rlu[2]**2 + term4*q_rlu[0]**3 + term5*q_rlu[1]**3 + term6*q_rlu[2]**3) / 2.0
                else:
@@ -673,6 +606,7 @@ def analytic(iq,f_coeff,q_sampl,v_coul,iw,igr,igc,cut_is_slab,rimw_typ,is_anis_o
               epsm1_sampl = (func_val / iku_v_norm(qpGc + q_sampl)) * vslab * iku_v_norm(q_sampl)
               func = func_val * iku_v_norm(q_sampl)**2
 
+          return W_sampl,epsm1_sampl,func 
 
 
 
