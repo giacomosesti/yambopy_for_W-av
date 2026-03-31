@@ -161,14 +161,14 @@ class QPCheckInterpolateW:
                ibz_index = self.kmap[bz_index]
                print(' check q g1 g2')
     
-               indexes=self.get_equiv_index(q_num,self.red_gvectors[igr],self.red_gvectors[igc],ylat)
+               indexes=self.get_equiv_index(q_num,self.red_gvectors[igc],self.red_gvectors[igr],ylat)
                print(indexes)
                inter=list(range(Np*i,Np*(i+1)))
                #
                # Transform f_coeff from iBZ to BZ
                #
                symi=np.linalg.inv(ylat.sym_red[ylat.symmetry_indexes[bz_index]])
-               f_trans=trans_f_coeff(self.f_coeff[iw,np.int64(indexes[0]),np.int64(indexes[2]),np.int64(indexes[1]),:],symi)
+               f_trans=trans_f_coeff(self.f_coeff[iw,np.int64(indexes[0]),np.int64(indexes[1]),np.int64(indexes[2]),:],symi)
                #
                # we define the q_sampl for which we calculate the interpolated quantities
                # the q_sampl are always centered in 0, only the interpolated quantities depend on the bz_index of input
@@ -210,7 +210,7 @@ class QPCheckInterpolateW:
                 
                   W[mem_idx],epsm1[mem_idx],f_val[mem_idx]= \
                        analytic(ibz_index,self.f_coeff,dq[:,i_dense],q_rlu[:,i_dense],self.red_gvectors,v_coul[mem_idx],vslab[i_dense],
-                                iw,igr,igc,(self.n_dirs is 2),self.rimw_type,self.is_anis_on,self.em1_anis,self.rlat,self.alat,idir,self.cut_dir,self.i_dirs) 
+                                iw,igc,igr,(self.n_dirs is 2),self.rimw_type,self.is_anis_on,self.em1_anis,self.rlat,self.alat,idir,self.cut_dir,self.i_dirs) 
                elif(((igr==0 and igc==1) or (igr==1 and igc==0)) and ibz_index==0 and self.rimw_type=='metal'):
                 
                  for i_dense in range(Np):
@@ -219,7 +219,7 @@ class QPCheckInterpolateW:
 
                   W[mem_idx],epsm1[mem_idx],f_val[mem_idx]= \
                        analytic(ibz_index,self.f_coeff,dq[:,i_dense],q_rlu[:,i_dense],self.red_gvectors,v_coul[mem_idx],vslab[i_dense],
-                                iw,igr,igc,(self.n_dirs is 2),self.rimw_type,self.is_anis_on,self.em1_anis,self.rlat,self.alat,idir,self.cut_dir,self.i_dirs)
+                                iw,igc,igr,(self.n_dirs is 2),self.rimw_type,self.is_anis_on,self.em1_anis,self.rlat,self.alat,idir,self.cut_dir,self.i_dirs)
                  
                else:
                   f_val[inter] = evaluate_polynomial(dq, f_trans)
@@ -426,7 +426,7 @@ def v_bare(q_vec, g_vec, n_dirs, lcut, cutdir):
     vslab=v_val*denom
     return v_val,vslab
 
-def analytic(iq,f_coeff,q_sampl,q_rlu,gvec,v_coul,vslab,iw,igr,igc,cut_is_slab,rimw_type,is_anis_on,em1_anis,rlat,alat,idir_idx,cutdir=2,idir=3):
+def analytic(iq,f_coeff,q_sampl,q_rlu,gvec,v_coul,vslab,iw,igc,igr,cut_is_slab,rimw_type,is_anis_on,em1_anis,rlat,alat,idir_idx,cutdir=2,idir=3):
    
    q0_def_norm=1e-12
    q_out = red_car([q_rlu],rlat)[0]*2*np.pi
@@ -440,13 +440,13 @@ def analytic(iq,f_coeff,q_sampl,q_rlu,gvec,v_coul,vslab,iw,igr,igc,cut_is_slab,r
            if iw == 0: 
  
                # Polynomial evaluation for Metal Head
-               func = f_coeff[iw,iq,igr,igc,0] + \
-                      f_coeff[iw,iq,igr,igc,1] * abs(q_rlu[0]) + \
-                      f_coeff[iw,iq,igr,igc,2] * abs(q_rlu[1]) + \
-                      f_coeff[iw,iq,igr,igc,3] * abs(q_rlu[2]) + \
-                      f_coeff[iw,iq,igr,igc,4] * (q_rlu[0]**2) + \
-                      f_coeff[iw,iq,igr,igc,5] * (q_rlu[1]**2) + \
-                      f_coeff[iw,iq,igr,igc,6] * (q_rlu[2]**2)
+               func = f_coeff[iw,iq,igc,igr,0] + \
+                      f_coeff[iw,iq,igc,igr,1] * abs(q_rlu[0]) + \
+                      f_coeff[iw,iq,igc,igr,2] * abs(q_rlu[1]) + \
+                      f_coeff[iw,iq,igc,igr,3] * abs(q_rlu[2]) + \
+                      f_coeff[iw,iq,igc,igr,4] * (q_rlu[0]**2) + \
+                      f_coeff[iw,iq,igc,igr,5] * (q_rlu[1]**2) + \
+                      f_coeff[iw,iq,igc,igr,6] * (q_rlu[2]**2)
                
                epsm1_sampl = 1.0/(1.0 - v_coul*func)
                W_sampl = v_coul/(1.0 - v_coul*func)
