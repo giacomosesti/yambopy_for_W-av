@@ -90,9 +90,15 @@ class XmpaDB(object):
         self.red_qpoints = car_red(self.car_qpoints,self.rlat) 
         self.nqpoints = len(self.car_qpoints)
 
+        # The d3kfactor used here is equal to
+        #  
+        # d3kfactor= nspin(=2)/(2*pi)**3*RL_vol/Nk
+        #
+        # It corresponds to the q_weight factor used in yambo 
+        # to calculate the gamp(G,G') 
+        # 
         ylat = YamboLatticeDB.from_db_file(filename='SAVE/ns.db1',Expand=True)
-        print(ylat.nkpoints)
-        self.d3kfactor = 8/(2*np.pi)**4 * vol_lat(self.rlat)/self.nqpoints
+        self.d3kfactor = 1/(2*np.pi)* vol_lat(self.rlat)/ylat.nkpoints
 
         # check if rim database present
         self.rim=True
@@ -116,20 +122,20 @@ class XmpaDB(object):
 
         #set the number of fragments to read
         if isinstance(nqs,int):
-           range_nqs=[nqs]
+           self.range_nqs=[nqs]
         elif isinstance(nqs,list):
-           range_nqs=nqs
+           self.range_nqs=nqs
         else:
-           range_nqs=range(self.nqpoints)                
+           self.range_nqs=range(self.nqpoints)                
 
         #read fragments
         read_fragments=True
         for iQ in range(self.nqpoints):
             if not os.path.isfile("%s/%s_fragment_%d"%(self.mpa,self.filename,iQ+1)): read_fragments=False
-        if read_fragments: self.readDBs(range_nqs) # get sqrt(v)*X*sqrt(v)
+        if read_fragments: self.readDBs(self.range_nqs) # get sqrt(v)*X*sqrt(v)
 
         #get qpg
-        self.get_Coulomb(range_nqs)
+        self.get_Coulomb(self.range_nqs)
 
     def readDBs(self,range_nqs):
         """
@@ -227,7 +233,7 @@ class XmpaDB(object):
              
     def get_W(self,iq=0,ig1=0,ig2=0,w_rnge_in=[0,5],nw=1000):
 
-       # frequency range of X and sampling
+       # frequency range of W and sampling
        self.w_rnge = np.linspace(w_rnge_in[0],w_rnge_in[1],nw)
        self.nw=nw
 
@@ -243,3 +249,50 @@ class XmpaDB(object):
                             *self.sqrt_V[iq,ig2]*self.sqrt_V[iq,ig1]
 
        return W_MPA
+
+
+    def get_W_summed(self,ig1=0,ig2=0,w_rnge_in=[0,5],nw=1000):
+       
+       # we build WGG' summed on all the q-points of the BZ
+       # in a 2D WGG' depends on the supercell size, unless also summing on the RL vectors along the truncated direction
+       if (len(self.range_nqs)<self.nqpoints):
+          raise ValueError("Error: not enough MPA_ER* fragments have been read, all the q-points of the IBZ are needed")
+
+       # frequency range of W and sampling
+       self.w_rnge = np.linspace(w_rnge_in[0],w_rnge_in[1],nw)
+       self.nw=nw
+
+       W_MPA = np.zeros(len(w_rnge),dtype=complex)
+
+
+       for iw in range(len(w_rnge)):
+          if (self.head_version>= 5.4):
+             W_MPA[iw,iq] = np.sum(self_residues[iq,ig1,ig2]*(1./(w_dense[iw]-self_poles[iq,ig1,ig2]+damp)-1./(w_dense[iw]+self_poles[iq,ig1,ig2]-damp)))
+
+          else:
+             W_MPA[iw,iq] = np.sum(self_residues[iq,ig1,ig2]*(1./(w_dense[iw]-self_poles[iq,ig1,ig2]+damp)-1./(w_dense[iw]+self_poles[iq,ig1,ig2]-damp))) \
+                            *self.sqrt_V[iq,ig2]*self.sqrt_V[iq,ig1]
+
+       return W_MPA
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
