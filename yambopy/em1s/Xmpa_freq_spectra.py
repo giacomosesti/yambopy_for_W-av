@@ -97,8 +97,9 @@ class XmpaDB(object):
         # It corresponds to the q_weight factor used in yambo 
         # to calculate the gamp(G,G') 
         # 
-        ylat = YamboLatticeDB.from_db_file(filename='SAVE/ns.db1',Expand=True)
+        ylat = YamboLatticeDB.from_db_file(filename='%s/%s'%(self.save,db1),Expand=True)
         self.d3kfactor = 1/(2*np.pi)* vol_lat(self.rlat)/ylat.nkpoints
+        self.weights=ylat.weights_ibz[:self.nqpoints] 
 
         # check if rim database present
         self.rim=True
@@ -106,7 +107,7 @@ class XmpaDB(object):
            self.rim=False 
 
         # for yambo 5.4 onward cutoff is stored in mpa_ER, prior to it read from Xmpa
-        if (self.head_version>= 5.41):
+        if (self.head_version>= 5.4):
          try:
             database.variables['CUTOFF'][:]
             self.cutoff = str(database.variables['CUTOFF'][:][0],'UTF-8').strip()
@@ -135,7 +136,7 @@ class XmpaDB(object):
         if read_fragments: self.readDBs(self.range_nqs) # get sqrt(v)*X*sqrt(v)
 
         #get qpg
-        self.get_Coulomb(self.range_nqs)
+        self.get_Coulomb()
 
     def readDBs(self,range_nqs):
         """
@@ -170,7 +171,7 @@ class XmpaDB(object):
             #close database
             database.close()
 
-    def get_Coulomb(self,range_nqs):
+    def get_Coulomb(self):
         """
         If rim_qpg database is present, read it
 
@@ -214,65 +215,69 @@ class XmpaDB(object):
 
             self.sqrt_V[:,alloc_dim:self.size] = np.sqrt(self.d3kfactor*4*np.pi)/q_p_G[:,alloc_dim:self.size]
 
-    def get_X(self,iq=0,ig1=0,ig2=0,w_rnge_in=[0,5],nw=1000):
+    def get_X(self,ig1=0,ig2=0,w_rnge_in=[0,5],nw=1000,damp=5e-3):
 
-       # frequency range of X and sampling
+       # frequency range of VX and sampling
        self.w_rnge = np.linspace(w_rnge_in[0],w_rnge_in[1],nw)
        self.nw=nw
-
-       X_MPA = np.zeros(len(w_rnge),dtype=complex)
+       w_i=self.w_rnge[:,np.newaxis,np.newaxis]
+       X_MPA=np.zeros((self.nw,self.nqpoints),dtype=np.complex64)
      
-       for iw in range(len(w_rnge)):
-          if (self.head_version>= 5.4):
-             X_MPA[iw,iq] = np.sum(self_residues[iq,ig1,ig2]*(1./(w_dense[iw]-self_poles[iq,ig1,ig2]+damp)-1./(w_dense[iw]+self_poles[iq,ig1,ig2]-damp))) \
-                            /self.sqrt_V[iq,ig2]/self.sqrt_V[iq,ig1]
-          else:
-             X_MPA[iw,iq] = np.sum(self_residues[iq,ig1,ig2]*(1./(w_dense[iw]-self_poles[iq,ig1,ig2]+damp)-1./(w_dense[iw]+self_poles[iq,ig1,ig2]-damp))) 
+       if (self.head_version>= 5.4):
+          X_MPA[:,self.range_nqs] = np.sum(self.residues[self.range_nqs,:,ig1,ig2]/self.sqrt_V[self.range_nqs,np.newaxis,ig2]/self.sqrt_V[self.range_nqs,np.newaxis,ig1]* \
+                                    (1./(w_i-self.poles[self.range_nqs,:,ig1,ig2]+damp)-1./(w_i+self.poles[self.range_nqs,:,ig1,ig2]-damp)),axis=2) 
+       else:
+          X_MPA[:,self.range_nqs] = np.sum(self.residues[self.range_nqs,:,ig1,ig2]* \
+                                    (1./(w_i-self.poles[self.range_nqs,:,ig1,ig2]+damp)-1./(w_i+self.poles[self.range_nqs,:,ig1,ig2]-damp)),axis=2) 
 
-       return X_MPA                            
+       # return VX(g1,g2)
+       return X_MPA
              
-    def get_W(self,iq=0,ig1=0,ig2=0,w_rnge_in=[0,5],nw=1000):
+    def get_W(self,ig1=0,ig2=0,w_rnge_in=[0,5],nw=1000,damp=5e-3):
 
        # frequency range of W and sampling
        self.w_rnge = np.linspace(w_rnge_in[0],w_rnge_in[1],nw)
        self.nw=nw
+       w_i=self.w_rnge[:,np.newaxis,np.newaxis]
 
-       W_MPA = np.zeros(len(w_rnge),dtype=complex)
+       W_MPA=np.zeros((self.nw,self.nqpoints),dtype=np.complex64)
 
+       if (self.head_version>= 5.4):
+          W_MPA[:,self.range_nqs] = np.sum(self.residues[self.range_nqs,:,ig1,ig2]* \
+                                    (1./(w_i-self.poles[self.range_nqs,:,ig1,ig2]+damp)-1./(w_i+self.poles[self.range_nqs,:,ig1,ig2]-damp)),axis=2) 
+       else:
+          W_MPA[:,self.range_nqs] = np.sum(self.residues[self.range_nqs,:,ig1,ig2]*self.sqrt_V[iq,np.newaxis,ig2]*self.sqrt_V[iq,np.newaxis,ig1]* \
+                                    (1./(w_i-self.poles[self.range_nqs,:,ig1,ig2]+damp)-1./(w_i+self.poles[self.range_nqs,:,ig1,ig2]-damp)),axis=2) 
 
-       for iw in range(len(w_rnge)):
-          if (self.head_version>= 5.4):
-             W_MPA[iw,iq] = np.sum(self_residues[iq,ig1,ig2]*(1./(w_dense[iw]-self_poles[iq,ig1,ig2]+damp)-1./(w_dense[iw]+self_poles[iq,ig1,ig2]-damp)))
-                            
-          else:
-             W_MPA[iw,iq] = np.sum(self_residues[iq,ig1,ig2]*(1./(w_dense[iw]-self_poles[iq,ig1,ig2]+damp)-1./(w_dense[iw]+self_poles[iq,ig1,ig2]-damp))) \
-                            *self.sqrt_V[iq,ig2]*self.sqrt_V[iq,ig1]
-
+       #return W(g1,g2) in Ha
        return W_MPA
 
 
-    def get_W_summed(self,ig1=0,ig2=0,w_rnge_in=[0,5],nw=1000):
+    def get_W_summed(self,ig1=0,ig2=0,w_rnge_in=[0,5],nw=1000,damp=5e-3):
        
-       # we build WGG' summed on all the q-points of the BZ
+       # we build WGG' summed on all the q-points of the BZ, the iBZ are multiplied by the proper weights
        # in a 2D WGG' depends on the supercell size, unless also summing on the RL vectors along the truncated direction
        if (len(self.range_nqs)<self.nqpoints):
+
           raise ValueError("Error: not enough MPA_ER* fragments have been read, all the q-points of the IBZ are needed")
 
        # frequency range of W and sampling
        self.w_rnge = np.linspace(w_rnge_in[0],w_rnge_in[1],nw)
        self.nw=nw
+       w_i=self.w_rnge[:,np.newaxis,np.newaxis]
+       weights=self.weights[:,np.newaxis]
+       
+       W_MPA=np.zeros(self.nw,dtype=np.complex64)
 
-       W_MPA = np.zeros(len(w_rnge),dtype=complex)
 
+       if (self.head_version>= 5.4):
+          W_MPA = np.sum(weights*self.residues[...,ig1,ig2]*(1./(w_i-self.poles[...,ig1,ig2]+damp)-1./(w_i+self.poles[...,ig1,ig2]-damp)),axis=(1,2))
 
-       for iw in range(len(w_rnge)):
-          if (self.head_version>= 5.4):
-             W_MPA[iw,iq] = np.sum(self_residues[iq,ig1,ig2]*(1./(w_dense[iw]-self_poles[iq,ig1,ig2]+damp)-1./(w_dense[iw]+self_poles[iq,ig1,ig2]-damp)))
+       else:
+          W_MPA = np.sum(weights*self.residues[...,ig1,ig2]*(1./(w_i-self.poles[...,ig1,ig2]+damp)-1./(w_i+self.poles[...,ig1,ig2]-damp)) \
+                         *self.sqrt_V[...,ig2]*self.sqrt_V[...,ig1],axis=(1,2))
 
-          else:
-             W_MPA[iw,iq] = np.sum(self_residues[iq,ig1,ig2]*(1./(w_dense[iw]-self_poles[iq,ig1,ig2]+damp)-1./(w_dense[iw]+self_poles[iq,ig1,ig2]-damp))) \
-                            *self.sqrt_V[iq,ig2]*self.sqrt_V[iq,ig1]
-
+       # return W(g1,g2) q-summed in Ha
        return W_MPA
 
 

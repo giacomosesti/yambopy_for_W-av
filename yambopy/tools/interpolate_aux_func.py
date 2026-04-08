@@ -70,7 +70,7 @@ class QPCheckInterpolateW:
           except:
             raise IOError("Error opening %s/%s in RIM_W auxiliary function database"%(self.save,self.filename))
 
-        ylat = YamboLatticeDB.from_db_file(filename='SAVE/ns.db1',Expand=True)
+        ylat = YamboLatticeDB.from_db_file(filename='%s/%s'%(self.save,db1),Expand=True)
         ktree = build_ktree(ylat.red_kpoints)
         self.ktree = ktree
         self.kmap         = ylat.BZ_to_IBZ_indexes
