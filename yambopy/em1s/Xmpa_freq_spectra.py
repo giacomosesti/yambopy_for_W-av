@@ -25,6 +25,7 @@ import matplotlib
 import os
 from yambopy.lattice import vol_lat, rec_lat, car_red, red_car
 from yambopy.dbs.latticedb import YamboLatticeDB
+from yambopy.units import ha2ev
 
 class XmpaDB(object):
     """
@@ -98,8 +99,9 @@ class XmpaDB(object):
         # to calculate the gamp(G,G') 
         # 
         ylat = YamboLatticeDB.from_db_file(filename='%s/%s'%(self.save,db1),Expand=True)
-        self.d3kfactor = 1/(2*np.pi)* vol_lat(self.rlat)/ylat.nkpoints
-        self.weights=ylat.weights_ibz[:self.nqpoints] 
+        self.d3kfactor = 1/(2*np.pi)*vol_lat(self.rlat)/ylat.nkpoints
+        # Multiply weights by Nk to avoid double-counting
+        self.weights=ylat.weights_ibz[:self.nqpoints]*ylat.nkpoints 
 
         # check if rim database present
         self.rim=True
@@ -215,13 +217,16 @@ class XmpaDB(object):
 
             self.sqrt_V[:,alloc_dim:self.size] = np.sqrt(self.d3kfactor*4*np.pi)/q_p_G[:,alloc_dim:self.size]
 
-    def get_X(self,ig1=0,ig2=0,w_rnge_in=[0,5],nw=1000,damp=5e-3):
+    def get_X(self,ig1=0,ig2=0,w_rnge=None,nw=1000,damp=5e-3):
 
-       # frequency range of VX and sampling
-       self.w_rnge = np.linspace(w_rnge_in[0],w_rnge_in[1],nw)
-       self.nw=nw
-       w_i=self.w_rnge[:,np.newaxis,np.newaxis]
-       X_MPA=np.zeros((self.nw,self.nqpoints),dtype=np.complex64)
+       # set frequency range of VX
+       self.nw =nw
+       if w_rnge==None:
+        self.w_rnge = np.linspace(0,15,self.nw)
+       else:
+        self.w_rnge = np.linspace(w_rnge[0],w_rnge[-1],self.nw)
+       w_i=self.w_rnge[:,np.newaxis,np.newaxis]/ha2ev
+       X_MPA=np.zeros((nw,self.nqpoints),dtype=np.complex64)
      
        if (self.head_version>= 5.4):
           X_MPA[:,self.range_nqs] = np.sum(self.residues[self.range_nqs,:,ig1,ig2]/self.sqrt_V[self.range_nqs,np.newaxis,ig2]/self.sqrt_V[self.range_nqs,np.newaxis,ig1]* \
@@ -233,14 +238,16 @@ class XmpaDB(object):
        # return VX(g1,g2)
        return X_MPA
              
-    def get_W(self,ig1=0,ig2=0,w_rnge_in=[0,5],nw=1000,damp=5e-3):
+    def get_W(self,ig1=0,ig2=0,w_rnge=None,nw=1000,damp=5e-3):
 
-       # frequency range of W and sampling
-       self.w_rnge = np.linspace(w_rnge_in[0],w_rnge_in[1],nw)
-       self.nw=nw
-       w_i=self.w_rnge[:,np.newaxis,np.newaxis]
-
-       W_MPA=np.zeros((self.nw,self.nqpoints),dtype=np.complex64)
+       # set frequency range of W
+       self.nw =nw
+       if w_rnge==None:
+        self.w_rnge = np.linspace(0,15,self.nw)
+       else:
+        self.w_rnge = np.linspace(w_rnge[0],w_rnge[-1],self.nw)
+       w_i=self.w_rnge[:,np.newaxis,np.newaxis]/ha2ev
+       W_MPA=np.zeros((nw,self.nqpoints),dtype=np.complex64)
 
        if (self.head_version>= 5.4):
           W_MPA[:,self.range_nqs] = np.sum(self.residues[self.range_nqs,:,ig1,ig2]* \
@@ -253,7 +260,7 @@ class XmpaDB(object):
        return W_MPA
 
 
-    def get_W_summed(self,ig1=0,ig2=0,w_rnge_in=[0,5],nw=1000,damp=5e-3):
+    def get_W_summed(self,ig1=0,ig2=0,w_rnge=None,nw=1000,damp=5e-3):
        
        # we build WGG' summed on all the q-points of the BZ, the iBZ are multiplied by the proper weights
        # in a 2D WGG' depends on the supercell size, unless also summing on the RL vectors along the truncated direction
@@ -261,14 +268,15 @@ class XmpaDB(object):
 
           raise ValueError("Error: not enough MPA_ER* fragments have been read, all the q-points of the IBZ are needed")
 
-       # frequency range of W and sampling
-       self.w_rnge = np.linspace(w_rnge_in[0],w_rnge_in[1],nw)
-       self.nw=nw
-       w_i=self.w_rnge[:,np.newaxis,np.newaxis]
+       # set frequency range of W and get weights
+       self.nw =nw
+       if w_rnge==None:
+        self.w_rnge = np.linspace(0,15,self.nw)
+       else:
+        self.w_rnge = np.linspace(w_rnge[0],w_rnge[-1],self.nw)
+       w_i=self.w_rnge[:,np.newaxis,np.newaxis]/ha2ev
        weights=self.weights[:,np.newaxis]
-       
-       W_MPA=np.zeros(self.nw,dtype=np.complex64)
-
+       W_MPA=np.zeros(nw,dtype=np.complex64)
 
        if (self.head_version>= 5.4):
           W_MPA = np.sum(weights*self.residues[...,ig1,ig2]*(1./(w_i-self.poles[...,ig1,ig2]+damp)-1./(w_i+self.poles[...,ig1,ig2]-damp)),axis=(1,2))
@@ -279,25 +287,3 @@ class XmpaDB(object):
 
        # return W(g1,g2) q-summed in Ha
        return W_MPA
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
